@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bullet Journal</title>
+  <style>
+    :root {
+      --bg:        #ffffff;
+      --text:      #1a1a1a;
+      --muted:     #999;
+      --accent:    #4f7bef;
+      --bullet:    #c0c0c0;
+      --border:    #ebebeb;
+      --hover-bg:  #f8f8f8;
+      --indent:    24px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 28px 40px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .page-title {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .page-date {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 40px 80px;
+      max-width: 800px;
+      width: 100%;
+    }
+
+    /* ── Node ── */
+    .node { position: relative; }
+
+    .node-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 2px;
+      padding: 1px 4px;
+      border-radius: 4px;
+      min-height: 26px;
+    }
+
+    .node-row:hover { background: var(--hover-bg); }
+
+    /* Toggle / Bullet */
+    .toggle {
+      flex-shrink: 0;
+      width: 22px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: default;
+      user-select: none;
+    }
+
+    .toggle::before {
+      content: '•';
+      font-size: 18px;
+      color: var(--bullet);
+      line-height: 1;
+    }
+
+    .toggle.has-children {
+      cursor: pointer;
+    }
+
+    .toggle.has-children::before {
+      content: '▶';
+      font-size: 8px;
+      color: #999;
+      transition: transform 0.15s ease;
+    }
+
+    .toggle.has-children:not(.collapsed)::before {
+      transform: rotate(90deg);
+    }
+
+    .toggle.has-children:hover::before {
+      color: var(--accent);
+    }
+
+    /* Content */
+    .node-content {
+      flex: 1;
+      min-height: 26px;
+      line-height: 1.65;
+      font-size: 1rem;
+      outline: none;
+      padding: 0 4px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      cursor: text;
+      caret-color: var(--accent);
+    }
+
+    /* Children */
+    .children {
+      padding-left: var(--indent);
+      position: relative;
+    }
+
+    .children::before {
+      content: '';
+      position: absolute;
+      left: 10px;
+      top: 2px;
+      bottom: 4px;
+      width: 1px;
+      background: var(--border);
+    }
+
+    /* Keyboard hint */
+    .hint {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      background: #fafafa;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.73rem;
+      color: var(--muted);
+      line-height: 2;
+      pointer-events: none;
+    }
+
+    .hint kbd {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-family: inherit;
+      font-size: 0.7rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="page-title" id="pageTitle"></div>
+  <div class="page-date"  id="pageDate"></div>
+</header>
+
+<main id="journal"></main>
+
+<div class="hint">
+  <kbd>Enter</kbd> 새 항목 &nbsp;
+  <kbd>Tab</kbd> 들여쓰기 &nbsp;
+  <kbd>⇧Tab</kbd> 내어쓰기 &nbsp;
+  <kbd>▶</kbd> 접기/펼치기
+</div>
+
+<script>
+  const STORAGE_KEY = 'bullet-journal-v1';
+
+  /* ── Helpers ─────────────────────────────────── */
+  function genId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  function mkNode(text = '', children = []) {
+    return { id: genId(), text, collapsed: false, children };
+  }
+
+  function defaultData() {
+    return [
+      mkNode('Bullet Journal에 오신 것을 환영합니다!', [
+        mkNode('Tab — 들여쓰기 (자식 항목으로)'),
+        mkNode('Shift+Tab — 내어쓰기 (부모 레벨로)'),
+        mkNode('Enter — 같은 레벨에 새 항목 추가'),
+        mkNode('Backspace (빈 항목) — 삭제 후 이전 항목 이동'),
+        mkNode('▶ 화살표 클릭 — 접기 / 펼치기'),
+      ]),
+      mkNode('오늘 할 일', [mkNode('')]),
+      mkNode('메모', [mkNode('')]),
+    ];
+  }
+
+  /* ── State ───────────────────────────────────── */
+  let nodes = loadData();
+
+  function loadData() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY)) || defaultData();
+    } catch {
+      return defaultData();
+    }
+  }
+
+  function save() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nodes));
+  }
+
+  /* ── Tree utilities ──────────────────────────── */
+  function findNode(list, id) {
+    for (const n of list) {
+      if (n.id === id) return n;
+      const f = findNode(n.children, id);
+      if (f) return f;
+    }
+    return null;
+  }
+
+  // Returns { node, parent, siblings, index }
+  function findCtx(list, id, parent = null) {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === id) return { node: list[i], parent, siblings: list, index: i };
+      const f = findCtx(list[i].children, id, list[i]);
+      if (f) return f;
+    }
+    return null;
+  }
+
+  // Flat ordered list of visible node IDs (for arrow navigation)
+  function flatVisible(list) {
+    const ids = [];
+    for (const n of list) {
+      ids.push(n.id);
+      if (!n.collapsed && n.children.length > 0)
+        ids.push(...flatVisible(n.children));
+    }
+    return ids;
+  }
+
+  /* ── Rendering ───────────────────────────────── */
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function renderList(list) {
+    return list.map(renderNode).join('');
+  }
+
+  function renderNode(n) {
+    const hasKids = n.children.length > 0;
+    const tClass  = hasKids
+      ? 'toggle has-children' + (n.collapsed ? ' collapsed' : '')
+      : 'toggle';
+    const kids = (!n.collapsed && hasKids)
+      ? `<div class="children">${renderList(n.children)}</div>`
+      : '';
+    return `
+      <div class="node" data-id="${n.id}">
+        <div class="node-row">
+          <div class="${tClass}" data-id="${n.id}"></div>
+          <div class="node-content"
+               contenteditable="true"
+               spellcheck="false"
+               data-id="${n.id}">${esc(n.text)}</div>
+        </div>
+        ${kids}
+      </div>`;
+  }
+
+  function render(focusId, focusOffset) {
+    const journal = document.getElementById('journal');
+    journal.innerHTML = renderList(nodes);
+
+    journal.querySelectorAll('.node-content').forEach(el => {
+      el.addEventListener('keydown', onKeyDown);
+      el.addEventListener('input',   onInput);
+    });
+    journal.querySelectorAll('.toggle').forEach(el => {
+      el.addEventListener('click', onToggle);
+    });
+
+    if (!focusId) return;
+
+    const el = journal.querySelector(`.node-content[data-id="${focusId}"]`);
+    if (!el) return;
+    el.focus();
+
+    const sel   = window.getSelection();
+    const range = document.createRange();
+    const tn    = el.firstChild;
+
+    if (tn && tn.nodeType === Node.TEXT_NODE) {
+      const off = focusOffset === Infinity
+        ? tn.length
+        : Math.min(focusOffset, tn.length);
+      range.setStart(tn, off);
+      range.collapse(true);
+    } else {
+      range.selectNodeContents(el);
+      range.collapse(focusOffset !== Infinity);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  /* ── Event handlers ──────────────────────────── */
+  function onInput(e) {
+    const n = findNode(nodes, e.target.dataset.id);
+    if (n) { n.text = e.target.textContent; save(); }
+  }
+
+  function cursorOffset(el) {
+    const sel = window.getSelection();
+    return sel.rangeCount ? sel.getRangeAt(0).startOffset : 0;
+  }
+
+  function focusEl(id, atEnd) {
+    const el = document.querySelector(`.node-content[data-id="${id}"]`);
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(!atEnd);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function onKeyDown(e) {
+    const id  = e.target.dataset.id;
+    const off = cursorOffset(e.target);
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const text   = e.target.textContent;
+      const before = text.slice(0, off);
+      const after  = text.slice(off);
+
+      const ctx   = findCtx(nodes, id);
+      ctx.node.text = before;
+
+      const newNode = mkNode(after);
+      ctx.siblings.splice(ctx.index + 1, 0, newNode);
+      save();
+      render(newNode.id, 0);
+
+    } else if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      const ctx = findCtx(nodes, id);
+      if (ctx.index === 0) return;
+      const prev = ctx.siblings[ctx.index - 1];
+      const [n]  = ctx.siblings.splice(ctx.index, 1);
+      prev.collapsed = false;
+      prev.children.push(n);
+      save();
+      render(id, off);
+
+    } else if (e.key === 'Tab' && e.shiftKey) {
+      e.preventDefault();
+      const ctx = findCtx(nodes, id);
+      if (!ctx.parent) return;
+      const parentCtx = findCtx(nodes, ctx.parent.id);
+      const [n] = ctx.siblings.splice(ctx.index, 1);
+      parentCtx.siblings.splice(parentCtx.index + 1, 0, n);
+      save();
+      render(id, off);
+
+    } else if (e.key === 'Backspace' && e.target.textContent === '') {
+      e.preventDefault();
+      const ctx = findCtx(nodes, id);
+      if (!ctx.parent && ctx.siblings.length === 1) return;
+
+      const flat    = flatVisible(nodes);
+      const prevId  = flat[flat.indexOf(id) - 1] || null;
+      const kids    = ctx.node.children;
+      ctx.siblings.splice(ctx.index, 1, ...kids);
+      save();
+      render(prevId, Infinity);
+
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const flat = flatVisible(nodes);
+      const idx  = flat.indexOf(id);
+      if (idx > 0) focusEl(flat[idx - 1], true);
+
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const flat = flatVisible(nodes);
+      const idx  = flat.indexOf(id);
+      if (idx < flat.length - 1) focusEl(flat[idx + 1], false);
+    }
+  }
+
+  function onToggle(e) {
+    const n = findNode(nodes, e.target.dataset.id);
+    if (n && n.children.length > 0) {
+      n.collapsed = !n.collapsed;
+      save();
+      render(null, null);
+    }
+  }
+
+  /* ── Header ──────────────────────────────────── */
+  function setupHeader() {
+    const d    = new Date();
+    const days = ['일','월','화','수','목','금','토'];
+    document.getElementById('pageTitle').textContent =
+      `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
+    document.getElementById('pageDate').textContent =
+      `${days[d.getDay()]}요일`;
+  }
+
+  setupHeader();
+  render(null, null);
+</script>
+</body>
+</html>
